@@ -4,11 +4,17 @@ const cron = require("node-cron");
 const http = require("http");
 
 // --- ⚙️ SOZLAMALAR ---
-const BOT_TOKEN = "7863103574:AAEGC6y5ZuA4orbugd8Ssqiyv-sl4vSfvfs"; 
-const DATABASE_URL = "postgresql://postgres.nqvzqndmtxqrvjtigzuw:BarberShopbot7777@aws-1-eu-central-1.pooler.supabase.com:6543/postgres";
-const ADMIN_ID = 99999999; // ⚠️ O'Z ID RAQAMINGIZNI YOZING
 
-// Manzil koordinatasi
+// ✅ SIZNING TOKENINGIZ:
+const BOT_TOKEN = "7863103574:AAEGC6y5ZuA4orbugd8Ssqiyv-sl4vSfvfs"; 
+
+// ✅ SIZNING BAZA LINKINGIZ:
+const DATABASE_URL = "postgresql://postgres.nqvzqndmtxqrvjtigzuw:BarberShopbot7777@aws-1-eu-central-1.pooler.supabase.com:6543/postgres";
+
+// ⚠️ ADMIN ID (6377333240):
+const ADMIN_ID = 99999999; 
+
+// Manzil
 const LOCATION = { lat: 40.7821, lon: 72.3442 }; 
 
 const bot = new Bot(BOT_TOKEN);
@@ -17,7 +23,7 @@ const sql = postgres(DATABASE_URL, { ssl: "require" });
 // Xotira
 bot.use(session({ initial: () => ({ step: "main" }) }));
 
-// Render Heartbeat (O'chib qolmasligi uchun)
+// Render Heartbeat
 http.createServer((req, res) => { res.write("OK"); res.end(); }).listen(process.env.PORT || 3000);
 
 // --- 🛠 YORDAMCHI FUNKSIYALAR ---
@@ -29,7 +35,7 @@ function getWeekKeyboard() {
     for (let i = 0; i < 7; i++) {
         const nextDate = new Date(today);
         nextDate.setDate(today.getDate() + i);
-        const btnText = `${nextDate.getDate()}-${nextDate.getMonth() + 1} (${days[nextDate.getDay()]})`;
+        const btnText = `${nextDate.getDate()}.${nextDate.getMonth() + 1} (${days[nextDate.getDay()]})`;
         keyboard.text(btnText, `date_${nextDate.toISOString().split('T')[0]}`);
         if ((i + 1) % 2 === 0) keyboard.row(); 
     }
@@ -37,20 +43,29 @@ function getWeekKeyboard() {
     return keyboard;
 }
 
+// VAQTLARNI HISOBLASH (🔴 QIZIL / 🟢 YASHIL)
 async function getTimeSlots(masterId, dateStr, duration) {
     const master = await sql`SELECT start_time, end_time FROM masters WHERE id = ${masterId}`;
     const bookings = await sql`SELECT start_time FROM appointments WHERE master_id = ${masterId} AND booking_date = ${dateStr} AND status != 'cancelled'`;
+
     let slots = [];
-    let currentMin = master[0].start_time * 60;
-    let endMin = master[0].end_time * 60;
+    let startH = master[0].start_time; 
+    let endH = master[0].end_time;     
+    
+    let currentMin = startH * 60;
+    let endMin = endH * 60;
 
     while (currentMin + duration <= endMin) {
         let h = Math.floor(currentMin / 60);
         let m = currentMin % 60;
         let timeStr = `${h}:${m < 10 ? '0'+m : m}`; 
-        let timeSQL = `${h < 10 ? '0'+h : h}:${m < 10 ? '0'+m : m}:00`;
+        let timeSQL = `${h < 10 ? '0'+h : h}:${m < 10 ? '0'+m : m}:00`; 
+
         const isTaken = bookings.some(b => b.start_time === timeSQL);
-        if (!isTaken) slots.push(timeStr);
+        
+        // Statusni ham qo'shamiz
+        slots.push({ time: timeStr, status: isTaken ? 'taken' : 'free' });
+        
         currentMin += duration; 
     }
     return slots;
@@ -93,10 +108,18 @@ async function getMenu(userId, step, ctx) {
         keyboard = getWeekKeyboard();
     }
     else if (step === "time") {
-        text = "Vaqtni tanlang:";
+        text = "Vaqtni tanlang:\n(🔴 - Band, 🟢 - Bo'sh)";
         const slots = await getTimeSlots(ctx.session.masterId, ctx.session.date, ctx.session.duration);
         let r = 0;
-        slots.forEach(t => { keyboard.text(t, `time_${t}`); r++; if (r % 4 === 0) keyboard.row(); });
+        slots.forEach(s => { 
+            if (s.status === 'free') {
+                keyboard.text(`🟢 ${s.time}`, `time_${s.time}`);
+            } else {
+                keyboard.text(`🔴 ${s.time}`, `ignore_taken`);
+            }
+            r++; 
+            if (r % 4 === 0) keyboard.row(); 
+        });
         keyboard.row().text("🔙 Orqaga", "goto_date");
     }
     return { text, keyboard };
@@ -115,7 +138,13 @@ bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data;
     const userId = ctx.from.id;
 
-    // --- 📍 MANZIL (YANGILANGAN) ---
+    // BAND VAQT BOSILSA
+    if (data === "ignore_taken") {
+        await ctx.answerCallbackQuery({ text: "Uzur, bu vaqt band!", show_alert: true });
+        return;
+    }
+
+    // MANZIL
     if (data === "send_location") {
         await ctx.deleteMessage();
         await ctx.replyWithLocation(LOCATION.lat, LOCATION.lon);
@@ -126,7 +155,7 @@ bot.on("callback_query:data", async (ctx) => {
         return;
     }
 
-    // --- ❌ MENING BRONLARIM (OTMEN QILISH) ---
+    // MENING BRONLARIM
     if (data === "my_bookings") {
         const client = await sql`SELECT id FROM clients WHERE telegram_id = ${userId}`;
         if (client.length === 0) return ctx.reply("Siz hali ro'yxatdan o'tmagansiz.");
@@ -144,7 +173,7 @@ bot.on("callback_query:data", async (ctx) => {
             await ctx.editMessageText("Sizda faol bronlar yo'q.", { reply_markup: new InlineKeyboard().text("🔙 Orqaga", "goto_main") });
         } else {
             await ctx.deleteMessage();
-            await ctx.reply("📋 **Sizning faol navbatlaringiz:**\nBekor qilish uchun tugmani bosing:", { parse_mode: "Markdown" });
+            await ctx.reply("📋 **Sizning faol navbatlaringiz:**", { parse_mode: "Markdown" });
             
             for (const app of apps) {
                 const date = new Date(app.booking_date).toLocaleDateString();
@@ -157,31 +186,16 @@ bot.on("callback_query:data", async (ctx) => {
         return;
     }
 
-    // --- BEKOR QILISH LOGIKASI ---
+    // BEKOR QILISH
     if (data.startsWith("cancel_")) {
         const appId = data.split("_")[1];
         await sql`UPDATE appointments SET status = 'cancelled' WHERE id = ${appId}`;
         await ctx.editMessageText("✅ **Navbat bekor qilindi.**\nVaqt boshqalar uchun ochildi.", { parse_mode: "Markdown" });
-        
-        // Adminga xabar
-        try { await bot.api.sendMessage(ADMIN_ID, `⚠️ **Diqqat!**\nMijoz navbatini bekor qildi (ID: ${appId}). Vaqt ochildi.`); } catch(e){}
+        try { await bot.api.sendMessage(ADMIN_ID, `⚠️ **Diqqat!**\nMijoz navbatini bekor qildi (ID: ${appId}).`); } catch(e){}
         return;
     }
 
-    // --- ESLATMA UCHUN TUGMALAR ---
-    if (data.startsWith("confirm_rem_")) {
-        await ctx.editMessageText("✅ Rahmat! Sizni kutamiz.");
-        return;
-    }
-    if (data.startsWith("deny_rem_")) {
-        const appId = data.split("_")[2];
-        await sql`UPDATE appointments SET status = 'cancelled' WHERE id = ${appId}`;
-        await ctx.editMessageText("❌ Tushunarli. Navbatingiz bekor qilindi.");
-        try { await bot.api.sendMessage(ADMIN_ID, `⚠️ Eslatma: Mijoz kelmasligini aytdi (ID: ${appId}).`); } catch(e){}
-        return;
-    }
-
-    // --- ODDJY NAVIGATSIYA ---
+    // ODDJY NAVIGATSIYA
     if (data === "goto_main") ctx.session.step = "main";
     else if (data === "goto_services") ctx.session.step = "services";
     else if (data === "goto_date") ctx.session.step = "date";
@@ -197,7 +211,7 @@ bot.on("callback_query:data", async (ctx) => {
         ctx.session.date = data.split("_")[1]; ctx.session.step = "time";
     }
     
-    // --- ✅ TASDIQLASH VA BRON QILISH (YANGI DIZAYN) ---
+    // ✅ TASDIQLASH (CHIROYLI XABAR)
     else if (data.startsWith("time_")) {
         const time = data.split("_")[1];
         try {
@@ -217,7 +231,8 @@ bot.on("callback_query:data", async (ctx) => {
                 `📆 **Sana:** ${ctx.session.date}\n` +
                 `⏰ **Vaqt:** ${time}\n` +
                 `⏳ **Davomiylik:** ${ctx.session.duration} daqiqa\n\n` +
-                `📍 **Manzil:** Andijon shahar, Leninskiy ko'cha 10-uy.`, 
+                `📍 **Manzil:** Andijon shahar, Leninskiy ko'cha 10-uy.\n` + 
+                `📞 **Aloqa:** +998 90 123 45 67`, 
                 { 
                     parse_mode: "Markdown",
                     reply_markup: new InlineKeyboard().text("🔙 Bosh menyu", "goto_main")
@@ -239,10 +254,9 @@ bot.on("callback_query:data", async (ctx) => {
     await ctx.answerCallbackQuery();
 });
 
-// --- ⏰ CRON JOB (1 soat oldin eslatma) ---
+// CRON JOB (ESLATMA)
 cron.schedule('* * * * *', async () => {
     try {
-        // Hozirgi vaqt + 1 soat oralig'idagi bronlarni topamiz
         const upcoming = await sql`
             SELECT a.id, c.telegram_id, a.start_time, m.full_name
             FROM appointments a
@@ -252,15 +266,10 @@ cron.schedule('* * * * *', async () => {
             AND a.booking_date = CURRENT_DATE 
             AND a.start_time BETWEEN LOCALTIME + INTERVAL '59 minutes' AND LOCALTIME + INTERVAL '61 minutes'
         `;
-
         for (const app of upcoming) {
             await bot.api.sendMessage(Number(app.telegram_id), 
-                `⏰ **ESLATMA!**\n\n1 soatdan keyin (${app.start_time.slice(0,5)}) Master ${app.full_name} qabulidasiz.\n\nKela olasizmi?`,
-                {
-                    reply_markup: new InlineKeyboard()
-                        .text("✅ Ha, boraman", `confirm_rem_${app.id}`)
-                        .text("❌ Yo'q, bekor qilaman", `deny_rem_${app.id}`)
-                }
+                `⏰ **ESLATMA!**\n\n1 soatdan keyin (${app.start_time.slice(0,5)}) Master ${app.full_name} qabulidasiz.`,
+                { reply_markup: new InlineKeyboard().text("✅ Tushundim", "ok_rem") }
             );
         }
     } catch (e) { console.log("Cron xatosi:", e); }
