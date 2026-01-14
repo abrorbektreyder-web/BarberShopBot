@@ -12,22 +12,18 @@ const LOCATION = { lat: 40.7821, lon: 72.3442 };
 const bot = new Bot(BOT_TOKEN);
 const sql = postgres(DATABASE_URL, { ssl: "require" });
 
-// Session boshlang'ich holati
 bot.use(session({ initial: () => ({ step: "main" }) }));
 
-// Serverni ushlab turish (Render/Heroku uchun)
 http.createServer((req, res) => { res.write("OK"); res.end(); }).listen(process.env.PORT || 3000);
 
 // --- YORDAMCHI FUNKSIYALAR ---
 
-// ⚠️ BU FUNKSIYA BAZANI AVTOMATIK YANGILAYDI
 async function autoUpdateDatabase() {
     try {
-        // Clients jadvaliga phone_number ustunini qo'shadi (agar yo'q bo'lsa)
         await sql`ALTER TABLE clients ADD COLUMN IF NOT EXISTS phone_number TEXT`;
-        console.log("✅ Baza tekshirildi: 'phone_number' ustuni joyida.");
+        console.log("✅ Baza tekshirildi.");
     } catch (e) {
-        console.error("⚠️ Bazani yangilashda xatolik bo'ldi:", e);
+        console.error("⚠️ Baza xatosi:", e);
     }
 }
 
@@ -35,7 +31,6 @@ function getWeekKeyboard() {
     const keyboard = new InlineKeyboard();
     const days = ["Yak", "Dush", "Sesh", "Chor", "Pay", "Juma", "Shan"];
     const today = new Date();
-
     for (let i = 0; i < 7; i++) {
         const nextDate = new Date(today);
         nextDate.setDate(today.getDate() + i);
@@ -63,16 +58,12 @@ async function getTimeSlots(masterId, dateStr, duration) {
             let m = currentMin % 60;
             let timeStr = `${h}:${m < 10 ? '0'+m : m}`; 
             let timeSQL = `${h < 10 ? '0'+h : h}:${m < 10 ? '0'+m : m}:00`; 
-            
             const isTaken = bookings.some(b => b.start_time === timeSQL);
             slots.push({ time: timeStr, status: isTaken ? 'taken' : 'free' });
             currentMin += duration; 
         }
         return slots;
-    } catch (e) {
-        console.error("getTimeSlots xatosi:", e);
-        return [];
-    }
+    } catch (e) { return []; }
 }
 
 async function getMenu(userId, step, ctx) {
@@ -116,15 +107,11 @@ async function getMenu(userId, step, ctx) {
             slots.forEach(s => { 
                 if (s.status === 'free') keyboard.text(`🟢 ${s.time}`, `prebook_${s.time}`);
                 else keyboard.text(`🔴 ${s.time}`, `ignore_taken`);
-                r++; 
-                if (r % 4 === 0) keyboard.row(); 
+                r++; if (r % 4 === 0) keyboard.row(); 
             });
-        } else {
-            text = "Uzur, bu kunga bo'sh vaqtlar topilmadi.";
-        }
+        } else { text = "Uzur, bu kunga bo'sh vaqtlar topilmadi."; }
         keyboard.row().text("🔙 Orqaga", "goto_date");
     }
-    // --- YANGI: Tasdiqlash menyusi ---
     else if (step === "confirm_booking") {
         text = `📝 **Ma'lumotlarni tekshiring:**\n\n` +
                `✂️ Xizmat: **${ctx.session.serviceName || 'Xizmat'}**\n` +
@@ -132,15 +119,12 @@ async function getMenu(userId, step, ctx) {
                `📅 Sana: **${ctx.session.date}**\n` +
                `⏰ Vaqt: **${ctx.session.time}**\n\n` +
                `Barchasi to'g'rimi?`;
-        
         keyboard.text("✅ Tasdiqlash", "confirm_final").row();
         keyboard.text("❌ Bekor qilish", "cancel_process");
     }
-
     return { text, keyboard };
 }
 
-// Bron qilish funksiyasi
 async function executeBooking(ctx, userId) {
     try {
         let client = await sql`SELECT id FROM clients WHERE telegram_id = ${userId}`;
@@ -156,14 +140,7 @@ async function executeBooking(ctx, userId) {
         await sql`INSERT INTO appointments (booking_date, start_time, end_time, master_id, client_id, service_id) 
                   VALUES (${ctx.session.date}, ${time+':00'}, ${endTimeStr}, ${ctx.session.masterId}, ${client[0].id}, ${ctx.session.serviceId})`;
 
-        await ctx.reply(`✅ **Qabul qilindi!**\n\n` +
-                        `📅 **Sana:** ${ctx.session.date}\n` +
-                        `⏰ **Vaqt:** ${time}\n` +
-                        `✂️ **Xizmat:** ${ctx.session.serviceName}\n` +
-                        `👤 **Usta:** ${ctx.session.masterName}\n\n` +
-                        `📍 **Manzil:** Andijon shahar, Leninskiy ko'cha 10-uy.\n` +
-                        `📞 **Aloqa:** +998 90 123 45 67\n\n` +
-                        `_Rejangiz o'zgarsa, "Mening bronlarim" bo'limidan bekor qilishingiz mumkin._`, 
+        await ctx.reply(`✅ **Qabul qilindi!**\n\n📅 Sana: ${ctx.session.date}\n⏰ Vaqt: ${time}\n✂️ Xizmat: ${ctx.session.serviceName}\n👤 Usta: ${ctx.session.masterName}\n\n📍 Manzil: Andijon shahar, Leninskiy ko'cha 10-uy.`, 
                         { parse_mode: "Markdown", reply_markup: { remove_keyboard: true } });
         
         try { 
@@ -176,11 +153,10 @@ async function executeBooking(ctx, userId) {
         await ctx.reply(menu.text, { reply_markup: menu.keyboard, parse_mode: "Markdown" });
 
     } catch (e) {
-        console.error("BRON XATOSI:", e);
         if (e.code === '23505' || (e.message && e.message.includes("duplicate key"))) {
             await ctx.reply("⚠️ Uzur, bu vaqt hozirgina band qilindi! Boshqa vaqt tanlang.");
         } else {
-            await ctx.reply("⚠️ Tizimda xatolik yuz berdi. Iltimos qaytadan urining.");
+            await ctx.reply("⚠️ Tizimda xatolik yuz berdi.");
         }
         ctx.session.step = "time";
         const menu = await getMenu(userId, "time", ctx);
@@ -194,22 +170,38 @@ bot.command("start", async (ctx) => {
     ctx.session = { step: "main" };
     try {
         await sql`INSERT INTO clients (telegram_id, full_name, username) VALUES (${ctx.from.id}, ${ctx.from.first_name}, ${ctx.from.username || null}) ON CONFLICT (telegram_id) DO NOTHING`; 
-    } catch (e) { console.error("Start Error:", e); }
+    } catch (e) { }
 
     const menu = await getMenu(ctx.from.id, "main", ctx);
     await ctx.reply(menu.text, { reply_markup: menu.keyboard, parse_mode: "Markdown" });
 });
 
-// Kontakt (Telefon raqam) kelganda ishlaydi
+// --- TELEFON RAQAM QABUL QILISH LOGIKASI ---
+
+// 1. Kontakt tugmasi orqali kelganda
 bot.on("message:contact", async (ctx) => {
     if (ctx.session.step === "waiting_for_phone") {
         const phone = ctx.message.contact.phone_number;
         const userId = ctx.from.id;
-
         await sql`UPDATE clients SET phone_number = ${phone} WHERE telegram_id = ${userId}`;
-        
-        await ctx.reply("✅ Telefon raqamingiz saqlandi. Bron qilinmoqda...", { reply_markup: { remove_keyboard: true } });
+        await ctx.reply("✅ Raqam saqlandi (Kontakt orqali).", { reply_markup: { remove_keyboard: true } });
         await executeBooking(ctx, userId);
+    }
+});
+
+// 2. Qo'lda yozilganda (Yangi qo'shilgan qism)
+bot.on("message:text", async (ctx) => {
+    if (ctx.session.step === "waiting_for_phone") {
+        const text = ctx.message.text;
+        // Raqamni tekshirish (faqat raqamlar va + belgisi)
+        if (text.length >= 7 && /^[+0-9\s]+$/.test(text)) {
+            const userId = ctx.from.id;
+            await sql`UPDATE clients SET phone_number = ${text} WHERE telegram_id = ${userId}`;
+            await ctx.reply(`✅ Raqam saqlandi: ${text}`, { reply_markup: { remove_keyboard: true } });
+            await executeBooking(ctx, userId);
+        } else {
+            await ctx.reply("⚠️ Iltimos, to'g'ri telefon raqam kiriting (masalan: +998901234567) yoki pastdagi tugmani bosing.");
+        }
     }
 });
 
@@ -221,26 +213,22 @@ bot.on("callback_query:data", async (ctx) => {
         await ctx.answerCallbackQuery({ text: "Uzur, bu vaqt band!", show_alert: true });
         return;
     }
-
     if (data === "send_location") {
         await ctx.deleteMessage();
         await ctx.replyWithLocation(LOCATION.lat, LOCATION.lon);
-        await ctx.reply("📍 **Manzil:** Andijon shahar, Leninskiy ko'cha 10-uy.\n\nMo'ljal: Eski shahar markazi.", {
+        await ctx.reply("📍 **Manzil:** Andijon shahar.", {
             parse_mode: "Markdown",
             reply_markup: new InlineKeyboard().text("🔙 Bosh menyu", "client_mode")
         });
         return;
     }
-
     if (data === "my_bookings") {
         const client = await sql`SELECT id FROM clients WHERE telegram_id = ${userId}`;
         if (client.length === 0) {
-            await ctx.answerCallbackQuery({ text: "Siz hali ro'yxatdan o'tmagansiz. /start bosing.", show_alert: true });
+            await ctx.answerCallbackQuery({ text: "Ro'yxatdan o'tmagansiz.", show_alert: true });
             return;
         }
-
         const apps = await sql`SELECT a.id, a.booking_date, a.start_time, m.full_name, s.name FROM appointments a JOIN masters m ON a.master_id = m.id JOIN services s ON a.service_id = s.id WHERE a.client_id = ${client[0].id} AND a.status = 'booked' AND a.booking_date >= NOW()::date ORDER BY a.booking_date, a.start_time`;
-
         if (apps.length === 0) {
             await ctx.editMessageText("Sizda faol bronlar yo'q.", { reply_markup: new InlineKeyboard().text("🔙 Orqaga", "client_mode") });
         } else {
@@ -265,40 +253,42 @@ bot.on("callback_query:data", async (ctx) => {
             const appId = data.split("_")[1];
             await sql`UPDATE appointments SET status = 'cancelled' WHERE id = ${appId}`;
             await ctx.editMessageText("✅ **Navbat bekor qilindi.**", { parse_mode: "Markdown" });
-            try { await bot.api.sendMessage(ADMIN_ID, `⚠️ Mijoz navbatini bekor qildi (ID: ${appId}).`); } catch(e){}
+            try { await bot.api.sendMessage(ADMIN_ID, `⚠️ Mijoz navbatini bekor qildi.`); } catch(e){}
             return;
         }
     }
 
-    if (data.startsWith("goto_")) {
-        ctx.session.step = data.substring(5);
-    } else if (data === "client_mode") {
-        ctx.session.step = "client_mode";
-    } else if (data.startsWith("srv_")) {
+    if (data.startsWith("goto_")) ctx.session.step = data.substring(5);
+    else if (data === "client_mode") ctx.session.step = "client_mode";
+    else if (data.startsWith("srv_")) {
         const p = data.split("_");
         ctx.session.serviceId = p[1];
         ctx.session.duration = parseInt(p[2]);
-        ctx.session.serviceName = p[3]; 
+        ctx.session.serviceName = p[3];
         ctx.session.step = "masters";
-    } else if (data.startsWith("mst_")) {
+    } 
+    else if (data.startsWith("mst_")) {
         const p = data.split("_");
         ctx.session.masterId = p[1];
         ctx.session.masterName = p[2];
         ctx.session.step = "date";
-    } else if (data.startsWith("date_")) {
+    } 
+    else if (data.startsWith("date_")) {
         ctx.session.date = data.split("_")[1];
         ctx.session.step = "time";
-    } else if (data.startsWith("prebook_")) {
+    } 
+    else if (data.startsWith("prebook_")) {
         const time = data.split("_")[1];
         ctx.session.time = time;
         ctx.session.step = "confirm_booking";
-    } else if (data === "confirm_final") {
+    } 
+    else if (data === "confirm_final") {
         let client = await sql`SELECT phone_number FROM clients WHERE telegram_id = ${userId}`;
         if (client.length === 0) {
             await sql`INSERT INTO clients (telegram_id, full_name, username) VALUES (${userId}, ${ctx.from.first_name}, ${ctx.from.username || null})`;
             client = [{ phone_number: null }];
         }
-
+        
         if (client[0].phone_number) {
              await ctx.deleteMessage();
              await executeBooking(ctx, userId);
@@ -306,8 +296,16 @@ bot.on("callback_query:data", async (ctx) => {
         } else {
              ctx.session.step = "waiting_for_phone";
              await ctx.deleteMessage();
-             const keyboard = new Keyboard().requestContact("📞 Raqamni yuborish").resized().oneTime();
-             await ctx.reply("Hurmatli mijoz, bronni tasdiqlash uchun telefon raqamingiz kerak.\n\nPastdagi tugmani bosing:", { reply_markup: keyboard });
+             
+             // IKKITA VARIANTLI JAVOB
+             const keyboard = new Keyboard().requestContact("📞 Raqamimni ulashish").resized().oneTime();
+             
+             await ctx.reply(
+                 "Hurmatli mijoz, bronni tasdiqlash uchun telefon raqamingiz kerak.\n\n" +
+                 "1️⃣ Pastdagi tugmani bosing (Oson usul).\n" +
+                 "2️⃣ **YOKI** raqamingizni shunchaki yozib yuboring (Masalan: +998901234567).", 
+                 { reply_markup: keyboard, parse_mode: "Markdown" }
+             );
              return;
         }
     }
@@ -327,24 +325,29 @@ cron.schedule('0 * * * *', async () => {
         for (const app of upcoming) {
             await bot.api.sendMessage(Number(app.telegram_id), `⏰ **ESLATMA!**\n\nTaxminan 1 soatdan keyin (${app.start_time.slice(0,5)}) Master ${app.full_name} qabulidasiz.`, { parse_mode: "Markdown" });
         }
-    } catch (e) { console.error("Cron xatosi:", e); }
+    } catch (e) { }
 });
 
-bot.catch((err) => {
-    const ctx = err.ctx;
-    console.error(`Error while handling update ${ctx.update.update_id}:`, err.error);
-});
+bot.catch((err) => { console.error(`Xatolik:`, err.error); });
 
 async function startBot() {
-    // ⚠️ ENG MUHIM JOYI: Bazani avtomatik yangilash
     await autoUpdateDatabase();
+    
+    // --- YANGI: MENYU TUGMASINI SOZLASH ---
+    // Bu botning chap pastki qismida "Menu" tugmasini chiqaradi
+    try {
+        await bot.api.setMyCommands([
+            { command: "start", description: "🏠 Bosh menyu / Qayta ishga tushirish" }
+        ]);
+        console.log("✅ Menyu tugmasi sozlandi.");
+    } catch (e) {
+        console.error("Menyu sozlashda xato:", e);
+    }
 
     try {
         await bot.start();
         console.log("✂️ Barbershop PRO ishga tushdi!");
-    } catch (e) {
-        console.error("Botni ishga tushirishda xatolik:", e);
-    }
+    } catch (e) { console.error("Start xatosi:", e); }
 }
 
 startBot();
