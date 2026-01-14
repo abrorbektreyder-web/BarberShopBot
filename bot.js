@@ -12,8 +12,10 @@ const LOCATION = { lat: 40.7821, lon: 72.3442 };
 const bot = new Bot(BOT_TOKEN);
 const sql = postgres(DATABASE_URL, { ssl: "require" });
 
+// Session
 bot.use(session({ initial: () => ({ step: "main" }) }));
 
+// Server
 http.createServer((req, res) => { res.write("OK"); res.end(); }).listen(process.env.PORT || 3000);
 
 // --- YORDAMCHI FUNKSIYALAR ---
@@ -21,10 +23,7 @@ http.createServer((req, res) => { res.write("OK"); res.end(); }).listen(process.
 async function autoUpdateDatabase() {
     try {
         await sql`ALTER TABLE clients ADD COLUMN IF NOT EXISTS phone_number TEXT`;
-        console.log("✅ Baza tekshirildi.");
-    } catch (e) {
-        console.error("⚠️ Baza xatosi:", e);
-    }
+    } catch (e) { console.error(e); }
 }
 
 function getWeekKeyboard() {
@@ -70,12 +69,15 @@ async function getMenu(userId, step, ctx) {
     let text = "";
     let keyboard = new InlineKeyboard();
 
+    // --- ADMIN PANELI ---
     if (userId === ADMIN_ID && step === "main") {
-        text = "👑 **Admin Paneli**";
-        keyboard.text("✂️ Mijoz rejimi", "client_mode");
+        text = "👑 **Admin Paneli**\n\nNima qilamiz, xo'jayin?";
+        keyboard.text("📢 Xabar yuborish (Reklama)", "admin_broadcast").row();
+        keyboard.text("✂️ Mijoz rejimi (Botni tekshirish)", "client_mode");
         return { text, keyboard };
     }
 
+    // --- MIJOZ MENYUSI ---
     if (step === "main" || step === "client_mode") {
         text = "💈 **Elegance Barbershop**\nZamonaviy soch turmaklari va sifatli xizmat!";
         keyboard.text("✂️ Navbat olish", "goto_services").row();
@@ -113,15 +115,16 @@ async function getMenu(userId, step, ctx) {
         keyboard.row().text("🔙 Orqaga", "goto_date");
     }
     else if (step === "confirm_booking") {
-        text = `📝 **Ma'lumotlarni tekshiring:**\n\n` +
-               `✂️ Xizmat: **${ctx.session.serviceName || 'Xizmat'}**\n` +
-               `👤 Usta: **${ctx.session.masterName || 'Usta'}**\n` +
-               `📅 Sana: **${ctx.session.date}**\n` +
-               `⏰ Vaqt: **${ctx.session.time}**\n\n` +
-               `Barchasi to'g'rimi?`;
+        text = `📝 **Ma'lumotlarni tekshiring:**\n\n✂️ Xizmat: **${ctx.session.serviceName}**\n👤 Usta: **${ctx.session.masterName}**\n📅 Sana: **${ctx.session.date}**\n⏰ Vaqt: **${ctx.session.time}**\n\nBarchasi to'g'rimi?`;
         keyboard.text("✅ Tasdiqlash", "confirm_final").row();
         keyboard.text("❌ Bekor qilish", "cancel_process");
     }
+    // --- YANGI: REKLAMA YUBORISH MENYUSI ---
+    else if (step === "admin_broadcast_wait") {
+        text = "📢 **Reklama yoki Tabrik yuborish**\n\nMijozlarga yubormoqchi bo'lgan xabaringizni shu yerga yozing (Rasm, Video yoki Matn yuborishingiz mumkin).\n\n_Bekor qilish uchun tugmani bosing._";
+        keyboard.text("❌ Bekor qilish", "goto_main");
+    }
+
     return { text, keyboard };
 }
 
@@ -140,7 +143,7 @@ async function executeBooking(ctx, userId) {
         await sql`INSERT INTO appointments (booking_date, start_time, end_time, master_id, client_id, service_id) 
                   VALUES (${ctx.session.date}, ${time+':00'}, ${endTimeStr}, ${ctx.session.masterId}, ${client[0].id}, ${ctx.session.serviceId})`;
 
-        await ctx.reply(`✅ **Qabul qilindi!**\n\n📅 Sana: ${ctx.session.date}\n⏰ Vaqt: ${time}\n✂️ Xizmat: ${ctx.session.serviceName}\n👤 Usta: ${ctx.session.masterName}\n\n📍 Manzil: Andijon shahar, Leninskiy ko'cha 10-uy.`, 
+        await ctx.reply(`✅ **Qabul qilindi!**\n\n📅 Sana: ${ctx.session.date}\n⏰ Vaqt: ${time}\n✂️ Xizmat: ${ctx.session.serviceName}\n👤 Usta: ${ctx.session.masterName}\n\n📍 Manzil: Andijon shahar.`, 
                         { parse_mode: "Markdown", reply_markup: { remove_keyboard: true } });
         
         try { 
@@ -165,7 +168,6 @@ async function executeBooking(ctx, userId) {
 }
 
 // --- COMMAND HANDLERS ---
-
 bot.command("start", async (ctx) => {
     ctx.session = { step: "main" };
     try {
@@ -176,31 +178,61 @@ bot.command("start", async (ctx) => {
     await ctx.reply(menu.text, { reply_markup: menu.keyboard, parse_mode: "Markdown" });
 });
 
-// --- TELEFON RAQAM QABUL QILISH LOGIKASI ---
+// --- ADMIN REKLAMA LOGIKASI ---
+bot.on("message", async (ctx, next) => {
+    // Agar Admin "Reklama yuborish" rejimida bo'lsa va xabar yozsa
+    if (ctx.from.id === ADMIN_ID && ctx.session.step === "admin_broadcast_wait") {
+        const users = await sql`SELECT telegram_id FROM clients`;
+        
+        await ctx.reply(`📢 Xabar yuborish boshlandi...\nJami mijozlar: ${users.length} ta.`);
+        
+        let sent = 0;
+        let blocked = 0;
 
-// 1. Kontakt tugmasi orqali kelganda
+        for (const user of users) {
+            try {
+                // Xabarni nusxalab yuborish (CopyMessage - rasm, video, matn hammasi o'tadi)
+                await ctx.copyMessage(Number(user.telegram_id));
+                sent++;
+            } catch (e) {
+                blocked++;
+            }
+            // Telegramni "spam" qilmaslik uchun ozgina kutish
+            await new Promise(r => setTimeout(r, 50)); 
+        }
+
+        await ctx.reply(`✅ **Hisobot:**\n\n📤 Yuborildi: ${sent} ta\n🚫 Bloklaganlar: ${blocked} ta\n\nJarayon tugadi.`);
+        
+        ctx.session.step = "main";
+        const menu = await getMenu(ADMIN_ID, "main", ctx);
+        await ctx.reply(menu.text, { reply_markup: menu.keyboard, parse_mode: "Markdown" });
+        return;
+    }
+    // Agar reklama bo'lmasa, oddiy logika davom etadi
+    await next();
+});
+
+// --- KONTAKT VA MATN HANDLERLAR ---
 bot.on("message:contact", async (ctx) => {
     if (ctx.session.step === "waiting_for_phone") {
         const phone = ctx.message.contact.phone_number;
         const userId = ctx.from.id;
         await sql`UPDATE clients SET phone_number = ${phone} WHERE telegram_id = ${userId}`;
-        await ctx.reply("✅ Raqam saqlandi (Kontakt orqali).", { reply_markup: { remove_keyboard: true } });
+        await ctx.reply("✅ Raqam saqlandi.", { reply_markup: { remove_keyboard: true } });
         await executeBooking(ctx, userId);
     }
 });
 
-// 2. Qo'lda yozilganda (Yangi qo'shilgan qism)
 bot.on("message:text", async (ctx) => {
     if (ctx.session.step === "waiting_for_phone") {
         const text = ctx.message.text;
-        // Raqamni tekshirish (faqat raqamlar va + belgisi)
         if (text.length >= 7 && /^[+0-9\s]+$/.test(text)) {
             const userId = ctx.from.id;
             await sql`UPDATE clients SET phone_number = ${text} WHERE telegram_id = ${userId}`;
             await ctx.reply(`✅ Raqam saqlandi: ${text}`, { reply_markup: { remove_keyboard: true } });
             await executeBooking(ctx, userId);
         } else {
-            await ctx.reply("⚠️ Iltimos, to'g'ri telefon raqam kiriting (masalan: +998901234567) yoki pastdagi tugmani bosing.");
+            await ctx.reply("⚠️ Iltimos, to'g'ri telefon raqam kiriting yoki tugmani bosing.");
         }
     }
 });
@@ -209,10 +241,19 @@ bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data;
     const userId = ctx.from.id;
 
-    if (data === "ignore_taken") {
-        await ctx.answerCallbackQuery({ text: "Uzur, bu vaqt band!", show_alert: true });
+    if (data === "ignore_taken") return ctx.answerCallbackQuery({ text: "Band!", show_alert: true });
+
+    // --- ADMIN TUGMALARI ---
+    if (data === "admin_broadcast") {
+        ctx.session.step = "admin_broadcast_wait";
+        const menu = await getMenu(userId, "admin_broadcast_wait", ctx);
+        await ctx.editMessageText(menu.text, { reply_markup: menu.keyboard, parse_mode: "Markdown" });
         return;
     }
+    if (data === "goto_main") {
+        ctx.session.step = "main"; // Asosiy menyuga qaytish
+    }
+
     if (data === "send_location") {
         await ctx.deleteMessage();
         await ctx.replyWithLocation(LOCATION.lat, LOCATION.lon);
@@ -224,10 +265,8 @@ bot.on("callback_query:data", async (ctx) => {
     }
     if (data === "my_bookings") {
         const client = await sql`SELECT id FROM clients WHERE telegram_id = ${userId}`;
-        if (client.length === 0) {
-            await ctx.answerCallbackQuery({ text: "Ro'yxatdan o'tmagansiz.", show_alert: true });
-            return;
-        }
+        if (client.length === 0) return ctx.answerCallbackQuery({ text: "Ro'yxatdan o'tmagansiz.", show_alert: true });
+        
         const apps = await sql`SELECT a.id, a.booking_date, a.start_time, m.full_name, s.name FROM appointments a JOIN masters m ON a.master_id = m.id JOIN services s ON a.service_id = s.id WHERE a.client_id = ${client[0].id} AND a.status = 'booked' AND a.booking_date >= NOW()::date ORDER BY a.booking_date, a.start_time`;
         if (apps.length === 0) {
             await ctx.editMessageText("Sizda faol bronlar yo'q.", { reply_markup: new InlineKeyboard().text("🔙 Orqaga", "client_mode") });
@@ -296,16 +335,8 @@ bot.on("callback_query:data", async (ctx) => {
         } else {
              ctx.session.step = "waiting_for_phone";
              await ctx.deleteMessage();
-             
-             // IKKITA VARIANTLI JAVOB
              const keyboard = new Keyboard().requestContact("📞 Raqamimni ulashish").resized().oneTime();
-             
-             await ctx.reply(
-                 "Hurmatli mijoz, bronni tasdiqlash uchun telefon raqamingiz kerak.\n\n" +
-                 "1️⃣ Pastdagi tugmani bosing (Oson usul).\n" +
-                 "2️⃣ **YOKI** raqamingizni shunchaki yozib yuboring (Masalan: +998901234567).", 
-                 { reply_markup: keyboard, parse_mode: "Markdown" }
-             );
+             await ctx.reply("Hurmatli mijoz, bronni tasdiqlash uchun telefon raqamingiz kerak.\n\n1️⃣ Pastdagi tugmani bosing (Oson).\n2️⃣ YOKI raqamingizni yozib yuboring (+998901234567).", { reply_markup: keyboard, parse_mode: "Markdown" });
              return;
         }
     }
@@ -332,19 +363,8 @@ bot.catch((err) => { console.error(`Xatolik:`, err.error); });
 
 async function startBot() {
     await autoUpdateDatabase();
-    
-    // --- YANGI: MENYU TUGMASINI SOZLASH ---
-    // Bu botning chap pastki qismida "Menu" tugmasini chiqaradi
     try {
-        await bot.api.setMyCommands([
-            { command: "start", description: "🏠 Bosh menyu / Qayta ishga tushirish" }
-        ]);
-        console.log("✅ Menyu tugmasi sozlandi.");
-    } catch (e) {
-        console.error("Menyu sozlashda xato:", e);
-    }
-
-    try {
+        await bot.api.setMyCommands([ { command: "start", description: "🏠 Bosh menyu" } ]);
         await bot.start();
         console.log("✂️ Barbershop PRO ishga tushdi!");
     } catch (e) { console.error("Start xatosi:", e); }

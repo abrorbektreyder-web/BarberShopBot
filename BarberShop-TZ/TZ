@@ -1,0 +1,86 @@
+# TEXNIK VAZIFA (TZ) — Telegram Bot (Smart Booking & CRM)
+
+## 1. LOYIHA HAQIDA
+Turi: Kosmetologiya va Go‘zallik saloni uchun avtomatlashtirilgan qabul va marketing boti.
+Maqsad: Admin aralashuvisiz mijozlarni yozish (Booking), ularni saralash (CRM) va maqsadli reklama (Targeting) yuborish.
+
+---
+
+## 2. FOYDALANUVCHI INTERFEYSI (CLIENT SIDE)
+
+### 2.1. Bosh Menyu
+Botga kirganda quyidagi bo‘limlar doimiy pastki menyuda turadi:
+1.  📅 Qabulga yozilish
+2.  👩‍⚕️ Mutaxassislar (Karousel yoki ro‘yxat shaklida: Foto + Ism + Yo‘nalish)
+3.  ✍️ Konsultatsiya (Aloqa)
+4.  ⚙️ Mening bronlarim
+
+### 2.2. Qabulga yozilish (To‘liq Avtomatlashgan)
+Jarayon 4 qadamdan iborat:
+
+1-qadam: Mutaxassisni tanlash
+*   Admin tomonidan qo‘shilgan barcha mutaxassislar tugma bo‘lib chiqadi.
+*   *Mantiq:* Har bir mutaxassisning "Yo‘nalishi" (Soch, Yuz, Tirnoq) orqa fonda biriktirilgan bo‘ladi.
+
+2-qadam: Kunni tanlash
+*   Faqat kelgusi 7 yoki 14 kunlik sanalar chiqadi.
+*   O‘tib ketgan kunlar ko‘rsatilmaydi.
+
+3-qadam: Soatni tanlash (Slotlar)
+*   Tanlangan kun uchun bo‘sh soatlar avtomatik hisoblanadi.
+*   Ish vaqti: 10:00 — 18:00.
+*   Band qilingan soatlar ro‘yxatdan o‘chiriladi yoki "❌ Band" deb ko‘rsatiladi.
+*   Mijoz faqat bo‘sh vaqtni tanlay oladi.
+
+4-qadam: Yakunlash va Avto-tasdiq
+*   Agar mijoz birinchi marta kirayotgan bo‘lsa -> "Telefon raqamni yuborish" tugmasini bosadi.
+*   Bot darhol bazaga yozadi va javob qaytaradi:
+    > "✅ Tabriklaymiz! Siz [Sana] kuni soat [Vaqt] da [Mutaxassis] qabuliga yozildingiz."
+
+### 2.3. Mening bronlarim
+*   Mijoz o‘zining faol yozuvlarini ko‘radi.
+*   Har bir yozuv yonida "🚫 Bekor qilish" tugmasi bo‘ladi.
+*   Bekor qilinganda: O‘sha vaqt darhol "Bo‘sh" holatiga qaytadi va boshqa mijozlar uchun ochiladi.
+
+### 2.4. Eslatmalar (Notification System)
+*   Qabul vaqtiga roppa-rosa 2 soat qolganda bot mijozga avtomatik eslatma yuboradi:
+    > "Eslatma! ⏰ Bugun soat [Vaqt] da qabulingiz bor. Kechikmang!"
+
+---
+
+## 3. ADMIN PANEL (BUSINESS SIDE)
+
+Faqat ID raqami kiritilgan Adminlargagina ko‘rinadi. Buyruq: /admin.
+
+### 3.1. Mutaxassislar Boshqaruvi
+*   Qo‘shish: Ism, Yo‘nalish (Kategoriya), Foto.
+*   O‘chirish: Ro‘yxatdan olib tashlash.
+
+### 3.2. Statistika
+*   Jami foydalanuvchilar soni.
+*   Bugungi va ertangi bronlar ro‘yxati.
+
+### 3.3. Smart Reklama (Targeted Broadcasting) — ENG MUHIM QISM
+Admin "Reklama yuborish"ni bosganda, bot auditoriyani tanlashni so‘raydi:
+
+1.  Hammaga (Umumiy yangiliklar uchun).
+2.  Faqat Yuz parvarishi mijozlariga (Kosmetologga yozilganlarga).
+3.  Faqat Soch parvarishi mijozlariga.
+4.  Faqat Tirnoq xizmati mijozlariga.
+
+*Mantiq:* Bot mijoz qaysi xizmatga ko‘p yozilgan bo‘lsa, uni o‘sha "Qiziqish guruhiga" (Tag) qo‘shib boradi va reklama faqat o‘shalarga boradi.
+
+---
+
+## 4. BAZA VA TEXNIK TALABLAR (BACKEND)
+
+1.  Database (Ma’lumotlar bazasi):
+    *   Users jadvali: ID, Ism, Tel, *Qiziqish_Kategoriyasi (Tag)*.
+    *   Specialists jadvali: Ism, Foto, Yo‘nalish.
+    *   Bookings jadvali: Mijoz_ID, Mutaxassis_ID, Sana, Vaqt, Status (Active/Cancelled).
+
+2.  Logika (Mantiq):
+    *   Double Booking Prevention: Ikki kishi bir vaqtga bosib qolsa, millisekund farqi bilan birinchisiga beriladi, ikkinchisiga "Uzur, bu vaqt hozirgina band qilindi" degan xabar chiqadi.
+
+3.  Hosting:
+    *   Server 24/7 ishlashi shart (Cron Job eslatmalar uchun).
